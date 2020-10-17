@@ -209,9 +209,7 @@ void Solve(int N, const std::vector<int> &ia, const std::vector<int> &ja, const 
     double rhoprev;
     double alpha;
     SpMv(ia, ja, A, x, tmp);
-    for(int i = 0; i < N; ++i) {
-        r[i] = b[i] - tmp[i];
-    }
+    axpby(b, tmp, 1, -1, r);
     bool convergence = false;
     k = 1;
     while(!convergence) {
@@ -224,16 +222,12 @@ void Solve(int N, const std::vector<int> &ia, const std::vector<int> &ja, const 
             p = z;
         } else {
             beta = rhonow / rhoprev;
-            for(int i = 0 ; i < N; ++i) {
-                p[i] = z[i] + beta * p[i];
-            }
+            axpby(z,p,1,beta, p);
         }
         SpMv(ia, ja, A, p, q);
         alpha = rhonow / dot(p, q);
-        for(int i = 0; i < N; ++i) {
-            x[i] = x[i] + alpha * p[i];
-            r[i] = r[i] - alpha * q[i];
-        }
+        axpby(x, p, 1, alpha, x);
+        axpby(r,q, 1, -alpha, r);
         if (rhonow < tol || k >= maxiter) {
             convergence = true;
         } else {
@@ -275,17 +269,6 @@ int main(int argc, char **argv) {
     int k;
     double res;
     Solve(N, ia, ja, A, b, M, tol, x, k, res);
-    // std::vector<double> x {1, 3.4, 2.5};
-    // std::vector<double> y {2.1, 2.3, 4};
-    // std::cout << dot(x,y) << std::endl;
-    // std::vector<double> res;
-    // axpby(x,y,1,2.5,res);
-    // for(auto i: res) {
-    //     std::cout << i << ' ';
-    // }
-    for(auto i: x) {
-        std::cout << i << ' ';
-    }
     if (debug) {
         std::ofstream fout("output.txt");
         fout << "N = " << N << std::endl;
