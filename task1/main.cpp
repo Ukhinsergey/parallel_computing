@@ -80,23 +80,23 @@ void Generate1(int Nx, int Ny, int k1, int k2, int &N, std::vector<int> &ia, std
         }
         //^ pos without diag
 
-        //now upright 
+        //upright 
         if (r != 0) { 
             int temp = (i - (Nx + 1) - (r - 1)) / (k1 + k2) * k2 + std::max(0, (i - (Nx + 1) - (r - 1)) % (k1 + k2) - k1);
             pos += temp;
         }
 
-        //now downleft
+        //downleft
         if (r != Ny) {
             int c0 = 1;
             if (c == 0 ) {
                 c0 = 0;
             }
-            int temp = (i - r - c0) / (k1 + k2) * k2 + std::max(0, (i - r - c0) % (k1 + k2) -k1);
+            int temp = (i - r - c0) / (k1 + k2) * k2 + std::max(0, (i - r - c0) % (k1 + k2) - k1);
             pos += temp;
 
         } else {
-            int temp = (i - c - r) / (k1 + k2) * k2 + std::max(0, (i - r - c) % (k1 + k2) -k1);
+            int temp = (i - c - r) / (k1 + k2) * k2 + std::max(0, (i - r - c) % (k1 + k2) - k1);
             pos += temp;
         }
 
@@ -131,14 +131,14 @@ void Generate1(int Nx, int Ny, int k1, int k2, int &N, std::vector<int> &ia, std
     }
 }
 
-
-void Fill(int N, std::vector<int> &ia, std::vector<int> &ja, std::vector<double> &A, std::vector<double> &b) {
+void Fill(int N, std::vector<int> &ia, std::vector<int> &ja, std::vector<double> &A, std::vector<double> &b, std::vector<double> &M) {
     A.resize(ia[N]);
     b.resize(N);
-    int curpos = 0;
+    M.resize(N);
     for(int i = 0 ; i < N; ++i) {
         double sum = 0;
         int pos = 0;
+        int curpos = ia[i];
         for(int j = ia[i]; j < ia[i + 1]; ++j) {
             if (ja[j] == i) {
                 pos = curpos;
@@ -152,7 +152,94 @@ void Fill(int N, std::vector<int> &ia, std::vector<int> &ja, std::vector<double>
         }
         sum *=1.234;
         A[pos] = sum;
+        M[i] = 1.0 / sum;
         b[i] = std::sin(i);
+    }
+}
+
+double dot(const std::vector<double> &x, const std::vector<double> &y) {
+    double res = 0;
+    int n = x.size();
+    int n2 = y.size();
+    if(n != n2) {
+        std::cout << "mismatch vector sizes for dot " << n << ' ' << n2 << std::endl;
+        exit(0);
+    }
+    for(int i = 0 ; i < n; ++i) {
+        res += x[i] * y[i];
+    }
+    return res;
+}
+
+void axpby(const std::vector<double> &x, const std::vector<double> &y, double a, double b, std::vector<double> &res) {
+    int n = x.size();
+    int n2 = y.size();
+    if(n != n2) {
+        std::cout << "mismatch vector sizes for axpby " << n << ' ' << n2 << std::endl;
+        exit(0);
+    }
+    res.resize(n);
+    for(int i = 0 ; i < n; ++i) {
+        res[i] = a * x[i] + b * y[i];
+    }
+}
+
+void SpMv(const std::vector<int> &ia, const std::vector<int> &ja, const std::vector<double> &a, const  std::vector<double> &b, std::vector<double> &res) {
+    int n = ia.size();
+    res.resize(n - 1);
+    for(int i = 0; i < n - 1; ++i){
+        double sum = 0.0;
+        const int jb = ia[i];
+        const int je = ia[i+1];
+        for(int j=jb; j<je; ++j) sum += a[j]*b[ja[j]];
+        res[i] = sum;
+    }
+}
+
+
+void Solve(int N, const std::vector<int> &ia, const std::vector<int> &ja, const std::vector<double> &A, const std::vector<double> &b, const std::vector<double> &M, double tol, std::vector<double> &x, int &k, double &res) {
+    std::vector<double> r(N);
+    std::vector<double> tmp(N);
+    std::vector<double> z(N);
+    std::vector<double> p(N);
+    std::vector<double> q(N);
+    int maxiter = 10;
+    double beta;
+    double rhonow;
+    double rhoprev;
+    double alpha;
+    SpMv(ia, ja, A, x, tmp);
+    for(int i = 0; i < N; ++i) {
+        r[i] = b[i] - tmp[i];
+    }
+    bool convergence = false;
+    k = 1;
+    while(!convergence) {
+        for(int i = 0 ; i < N; ++i) {
+            z[i] = M[i] * r[i];
+        }
+        rhonow = dot(r,z);
+        std::cout << std::sqrt(dot(r,r)) << ' ' <<rhonow << std::endl;
+        if (k == 1) {
+            p = z;
+        } else {
+            beta = rhonow / rhoprev;
+            for(int i = 0 ; i < N; ++i) {
+                p[i] = z[i] + beta * p[i];
+            }
+        }
+        SpMv(ia, ja, A, p, q);
+        alpha = rhonow / dot(p, q);
+        for(int i = 0; i < N; ++i) {
+            x[i] = x[i] + alpha * p[i];
+            r[i] = r[i] - alpha * q[i];
+        }
+        if (rhonow < tol || k >= maxiter) {
+            convergence = true;
+        } else {
+            k++;
+        }
+        rhoprev = rhonow;
     }
 }
 
@@ -178,7 +265,27 @@ int main(int argc, char **argv) {
     Generate1(Nx, Ny, k1, k2, N, ia, ja);
     std::vector<double> A;
     std::vector<double> b;
-    Fill(N, ia, ja, A, b);
+    std::vector<double> M;
+    Fill(N, ia, ja, A, b, M);
+    double tol = 0.0001;
+    std::vector<double> x(N);
+    for(int i = 0 ; i < N; ++i) {
+        x[i] = 0.0;
+    }
+    int k;
+    double res;
+    Solve(N, ia, ja, A, b, M, tol, x, k, res);
+    // std::vector<double> x {1, 3.4, 2.5};
+    // std::vector<double> y {2.1, 2.3, 4};
+    // std::cout << dot(x,y) << std::endl;
+    // std::vector<double> res;
+    // axpby(x,y,1,2.5,res);
+    // for(auto i: res) {
+    //     std::cout << i << ' ';
+    // }
+    for(auto i: x) {
+        std::cout << i << ' ';
+    }
     if (debug) {
         std::ofstream fout("output.txt");
         fout << "N = " << N << std::endl;
