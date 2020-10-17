@@ -2,7 +2,18 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <omp.h>
+#include <iomanip>
 
+double Generatetime = 0;
+double Filltime = 0;
+double Solvetime = 0;
+double dottime = 0;
+double axpbytime = 0;
+double SpMvtime = 0;
+int countdot = 0;
+int countaxpby = 0;
+int countSpMv = 0;
 
 void Generate(int Nx, int Ny, int k1, int k2, int &N, std::vector<int> &ia, std::vector<int> &ja){
     N = (Nx + 1) * (Ny + 1);
@@ -178,7 +189,6 @@ void axpby(const std::vector<double> &x, const std::vector<double> &y, double a,
         std::cout << "mismatch vector sizes for axpby " << n << ' ' << n2 << std::endl;
         exit(0);
     }
-    res.resize(n);
     for(int i = 0 ; i < n; ++i) {
         res[i] = a * x[i] + b * y[i];
     }
@@ -186,7 +196,6 @@ void axpby(const std::vector<double> &x, const std::vector<double> &y, double a,
 
 void SpMv(const std::vector<int> &ia, const std::vector<int> &ja, const std::vector<double> &a, const  std::vector<double> &b, std::vector<double> &res) {
     int n = ia.size();
-    res.resize(n - 1);
     for(int i = 0; i < n - 1; ++i){
         double sum = 0.0;
         const int jb = ia[i];
@@ -203,31 +212,45 @@ void Solve(int N, const std::vector<int> &ia, const std::vector<int> &ja, const 
     std::vector<double> z(N);
     std::vector<double> p(N);
     std::vector<double> q(N);
-    int maxiter = 10;
+    int maxiter = 10000;
     double beta;
     double rhonow;
     double rhoprev;
     double alpha;
+    double start = omp_get_wtime();
     SpMv(ia, ja, A, x, tmp);
+    SpMvtime += omp_get_wtime() - start;
+    start = omp_get_wtime();
     axpby(b, tmp, 1, -1, r);
+    axpbytime += omp_get_wtime() - start;
     bool convergence = false;
     k = 1;
     while(!convergence) {
         for(int i = 0 ; i < N; ++i) {
             z[i] = M[i] * r[i];
         }
+        start = omp_get_wtime();
         rhonow = dot(r,z);
-        std::cout << std::sqrt(dot(r,r)) << ' ' <<rhonow << std::endl;
+        dottime += omp_get_wtime() - start;
+        // std::cout << std::sqrt(dot(r,r)) << ' ' <<rhonow << std::endl;
         if (k == 1) {
             p = z;
         } else {
             beta = rhonow / rhoprev;
+            start = omp_get_wtime();
             axpby(z,p,1,beta, p);
+            axpbytime += omp_get_wtime() - start;
         }
+        start = omp_get_wtime();
         SpMv(ia, ja, A, p, q);
+        SpMvtime += omp_get_wtime() - start;
+        start = omp_get_wtime();
         alpha = rhonow / dot(p, q);
+        dottime += omp_get_wtime() - start;
+        start = omp_get_wtime();
         axpby(x, p, 1, alpha, x);
         axpby(r,q, 1, -alpha, r);
+        axpbytime += omp_get_wtime() - start;
         if (rhonow < tol || k >= maxiter) {
             convergence = true;
         } else {
@@ -235,12 +258,37 @@ void Solve(int N, const std::vector<int> &ia, const std::vector<int> &ja, const 
         }
         rhoprev = rhonow;
     }
+    res = rhonow;
+}
+
+void Report(int N, const std::vector<int> &ia, const std::vector<int> &ja, const std::vector<double> &A, const std::vector<double> &b, const std::vector<double> &x, double tol, std::ofstream &fout) {
+    fout << "N = " << N << std::endl;
+    std::vector<double> tmp(N);
+    SpMv(ia, ja, A, x, tmp);
+    axpby(b,tmp, 1, -1, tmp);
+    double l2 = sqrt(dot(tmp,tmp)) / sqrt(dot(b,b));
+    if( l2 > tol) {
+        std::cout << " L2 > eps; l2 = " << l2 << " eps = " << tol << std::endl;
+        return;
+    }
+    fout << "L2 = " << l2 << std::endl;
+    fout << std::setw(30) << "time for functions" << std::endl;;
+    fout << "Generation | " << std::setw(10) << "Filling" << " | " << std::setw(10) 
+        << "Dot" <<" | " << std::setw(10) << "Axpby" <<" | " << std::setw(10) << "SpMv" 
+        << " | " << std::setw(10) << "Solver" << std::endl; 
+    fout << Generatetime << "  | " << Filltime << "  | " << dottime << "  | "
+        << axpbytime << "  | " << SpMvtime << "  | " << Solvetime << std::endl;
+
+
 }
 
 int main(int argc, char **argv) {
     int Nx, Ny;
     int k1, k2;
     bool debug = false;
+    double start;
+    double end;
+    std::ofstream fout("output_non_parallel.txt");                       
     if (argc != 5 && argc != 6) {
         std::cout << "input: Nx, Ny, k1, k2, debug(optional)" << std::endl;
         return 1;
@@ -256,11 +304,15 @@ int main(int argc, char **argv) {
     std::vector<int> ia;
     std::vector<int> ja;
     int N;
+    start = omp_get_wtime(); 
     Generate1(Nx, Ny, k1, k2, N, ia, ja);
+    Generatetime =  omp_get_wtime() - start;
     std::vector<double> A;
     std::vector<double> b;
     std::vector<double> M;
+    start = omp_get_wtime();
     Fill(N, ia, ja, A, b, M);
+    Filltime = omp_get_wtime() - start;
     double tol = 0.0001;
     std::vector<double> x(N);
     for(int i = 0 ; i < N; ++i) {
@@ -268,10 +320,11 @@ int main(int argc, char **argv) {
     }
     int k;
     double res;
+    start = omp_get_wtime();
     Solve(N, ia, ja, A, b, M, tol, x, k, res);
+    Solvetime = omp_get_wtime() - start;
+    Report(N, ia, ja, A, b, x, tol, fout);
     if (debug) {
-        std::ofstream fout("output.txt");
-        fout << "N = " << N << std::endl;
         fout << "JA : ";
         for(const auto &j:ja) {
             fout << j << ' ';
@@ -289,6 +342,11 @@ int main(int argc, char **argv) {
         fout << std::endl;
         fout << "b : ";
         for(const auto &i: b) {
+            fout << i << ' ';
+        }
+        fout << std::endl;
+        fout << "x: ";
+        for(const auto &i: x) {
             fout << i << ' ';
         }
         fout << std::endl;
