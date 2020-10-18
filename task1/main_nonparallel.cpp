@@ -4,7 +4,6 @@
 #include <cmath>
 #include <omp.h>
 #include <iomanip>
-#include <string>
 
 double Generatetime = 0;
 double Filltime = 0;
@@ -72,7 +71,6 @@ void Generate1(int Nx, int Ny, int k1, int k2, int &N, std::vector<int> &ia, std
     int jasize = xysize(Nx, Ny, k1, k2);
     ia[N] = jasize;
     ja.resize(jasize);
-    #pragma omp parallel for schedule(dynamic, 100)
     for(int i = 0 ; i < N; ++i) {
         int r = i / (Nx + 1);
         int c = i % (Nx + 1);
@@ -148,7 +146,6 @@ void Fill(int N, std::vector<int> &ia, std::vector<int> &ja, std::vector<double>
     A.resize(ia[N]);
     b.resize(N);
     M.resize(N);
-    #pragma omp parallel for schedule(dynamic, 100)
     for(int i = 0 ; i < N; ++i) {
         double sum = 0;
         int pos = 0;
@@ -179,12 +176,9 @@ double dot(const std::vector<double> &x, const std::vector<double> &y) {
         std::cout << "mismatch vector sizes for dot " << n << ' ' << n2 << std::endl;
         exit(0);
     }
-    
-    #pragma omp parallel for reduction(+:res)
     for(int i = 0 ; i < n; ++i) {
         res += x[i] * y[i];
     }
-   
     return res;
 }
 
@@ -195,7 +189,6 @@ void axpby(const std::vector<double> &x, const std::vector<double> &y, double a,
         std::cout << "mismatch vector sizes for axpby " << n << ' ' << n2 << std::endl;
         exit(0);
     }
-    #pragma omp parallel for
     for(int i = 0 ; i < n; ++i) {
         res[i] = a * x[i] + b * y[i];
     }
@@ -203,7 +196,6 @@ void axpby(const std::vector<double> &x, const std::vector<double> &y, double a,
 
 void SpMv(const std::vector<int> &ia, const std::vector<int> &ja, const std::vector<double> &a, const  std::vector<double> &b, std::vector<double> &res) {
     int n = ia.size();
-    #pragma omp parallel for schedule(dynamic, 100)
     for(int i = 0; i < n - 1; ++i){
         double sum = 0.0;
         const int jb = ia[i];
@@ -220,7 +212,7 @@ void Solve(int N, const std::vector<int> &ia, const std::vector<int> &ja, const 
     std::vector<double> z(N);
     std::vector<double> p(N);
     std::vector<double> q(N);
-    int maxiter = 10000;
+    int maxiter = 1000000;
     double beta;
     double rhonow;
     double rhoprev;
@@ -263,7 +255,7 @@ void Solve(int N, const std::vector<int> &ia, const std::vector<int> &ja, const 
         countdot++;
         start = omp_get_wtime();
         axpby(x, p, 1, alpha, x);
-        axpby(r,q, 1, -alpha, r);
+        axpby(r, q, 1, -alpha, r);
         axpbytime += omp_get_wtime() - start;
         countaxpby += 2;
         if (rhonow < tol || k >= maxiter) {
@@ -301,22 +293,19 @@ int main(int argc, char **argv) {
     bool debug = false;
     double start;
     double end;
-    int T;                     
-    if (argc != 6 && argc != 7) {
-        std::cout << "input: Nx, Ny, k1, k2, T, debug(optional)" << std::endl;
+    std::ofstream fout("output_non_parallel.txt");                       
+    if (argc != 5 && argc != 6) {
+        std::cout << "input: Nx, Ny, k1, k2, debug(optional)" << std::endl;
         return 1;
     } else {
         Nx = atoi(argv[1]);
         Ny = atoi(argv[2]);
         k1 = atoi(argv[3]);
         k2 = atoi(argv[4]);
-        T = atoi(argv[5]);
-        if (argc == 7) {
-            debug = atoi(argv[6]);
+        if (argc == 6) {
+            debug = atoi(argv[5]);
         }
     }
-    std::ofstream fout("output_" + std::to_string(T) + ".txt");  
-    omp_set_num_threads(T);
     std::vector<int> ia;
     std::vector<int> ja;
     int N;
@@ -339,7 +328,6 @@ int main(int argc, char **argv) {
     start = omp_get_wtime();
     Solve(N, ia, ja, A, b, M, tol, x, k, res);
     Solvetime = omp_get_wtime() - start;
-    fout << "T = " << T << std::endl;
     fout << "k = " << k << std::endl;
     fout << "countdot | countaxpby | countSpMv" <<std::endl;
     fout << countdot * 2 * N << " | " << countaxpby * 3 * N << " | " << countSpMv * 2 * ja.size() << " | " << std::endl;
